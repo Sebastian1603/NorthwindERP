@@ -11,6 +11,7 @@ import { LoadStateComponent } from '../../../shared/ui/load-state';
 /** Almacenes con su responsable y un resumen de su stock. */
 @Component({
   selector: 'app-almacenes',
+  standalone: true, // Recomendado añadir si usas Angular 17+ de forma nativa
   imports: [RouterLink, IconComponent, LoadStateComponent],
   templateUrl: './almacenes.html',
   styleUrl: './almacenes.scss',
@@ -18,14 +19,22 @@ import { LoadStateComponent } from '../../../shared/ui/load-state';
 export class AlmacenesComponent {
   private api = inject(InventoryApi);
   readonly load = new Loader();
+  
   readonly warehouses = signal<Warehouse[]>([]);
   readonly stock = signal<StockItem[]>([]);
 
   readonly cards = computed(() =>
     this.warehouses().map((w) => {
       const rows = this.stock().filter((s) => s.warehouseId === w.warehouseId);
+      
       const low = rows.filter((s) => s.needsRestock).length;
-      return { ...w, products: rows.length, units: int(rows.reduce((a, s) => a + s.quantity, 0)), low };
+      
+      return { 
+        ...w, 
+        products: rows.length, 
+        units: int(rows.reduce((a, s) => a + (s.quantity || 0), 0)), 
+        low 
+      };
     }),
   );
 
