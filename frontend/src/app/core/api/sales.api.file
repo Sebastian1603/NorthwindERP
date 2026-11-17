@@ -1,0 +1,105 @@
+import { HttpClient, HttpParams } from '@angular/common/http';
+import { Injectable, inject } from '@angular/core';
+import { Observable } from 'rxjs';
+import {
+  CreateOrderRequest, CreateOrderResponse, Customer, CustomerOrderHistoryLine,
+  OrderDetail, OrderSummary, UpdateCustomerContact,
+} from '../models/api.models';
+
+/**
+ * Módulo Ventas: OrdersController + CustomersController.
+ * Consume el backend real con HttpClient. Las firmas públicas se mantienen igual que en la
+ * versión mock (devuelven Observable<T>), por lo que los componentes de `features` no cambian.
+ *Que se debe verificar antes de concretarlo: Los manejo de errores, configuracion y fechas.
+ *todos los endpoints exigen JWT: el token lo añade el interceptor de auth (`provideHttpClient`).
+ * ños errores llegan como HttpErrorResponse; su `error` es un ProblemDetails
+ * ({ status, title, detail, code? }) salvo GET /api/orders/{id}, cuyo 404 viene sin cuerpo.
+ * si el backend está en otro origen, cambie API_BASE (o use un proxy en desarrollo).
+ */
+const API_BASE = '/api';
+
+/** Arma HttpParams omitiendo valores null, undefined o vacíos. */
+function toParams(values: Record<string, string | number | null | undefined>): HttpParams {
+  let params = new HttpParams();
+  for (const [key, value] of Object.entries(values)) {
+    if (value === null || value === undefined || value === '') continue;
+    params = params.set(key, String(value));
+  }
+  return params;
+}
+
+@Injectable({ providedIn: 'root' })
+export class SalesApi {
+  private http = inject(HttpClient);
+
+  /**
+   * GET /api/orders  (vw_order_details_extended agrupada, más recientes primero)
+   * `from` / `to`: yyyy-MM-dd, `to` inclusive. `take`: 1-1000 (el backend usa 200 si no se envía,
+   * por eso aquí se envía siempre, igual que el mock, que devolvía hasta 1000).
+   */
+  orders(f: { customerId?: number | null; employeeId?: number | null; from?: string; to?: string; take?: number } = {}): Observable<OrderSummary[]> {
+    const params = toParams({
+      customerId: f.customerId,
+      employeeId: f.employeeId,
+      from: f.from,
+      to: f.to,
+      take: Math.min(Math.max(f.take ?? 1000, 1), 1000),
+    });
+    return this.http.get<OrderSummary[]>(`${API_BASE}/orders`, { params });
+  }
+
+  /** GET /api/orders/{id}  → { order, lines } */
+  order(id: number): Observable<OrderDetail> {
+    return this.http.get<OrderDetail>(`${API_BASE}/orders/${id}`);
+  }
+
+  /**
+   * POST /api/orders/with-customer  → INSERT Customers (si es nuevo) + CALL sp_register_order
+   * El body se arma campo por campo para enviar solo lo que el backend acepta:
+   *  - customerId O newCustomer, nunca ambos (si no, 400).
+   *  - Sin employeeId (sale del token) y sin precios (salen de Products.Price).
+   * Si falta stock responde 409 (code NW409) y no se guarda nada, ni el cliente nuevo.
+   */
+  createOrder(body: CreateOrderRequest): Observable<CreateOrderResponse> {
+    const payload = {
+      ...(body.customerId ? { customerId: body.customerId } : { newCustomer: body.newCustomer }),
+      warehouseId: body.warehouseId,
+      shipperId: body.shipperId ?? null,
+      items: body.items.map((i) => ({ productId: i.productId, quantity: i.quantity })),
+    };
+    return this.http.post<CreateOrderResponse>(`${API_BASE}/orders/with-customer`, payload);
+  }
+
+  /** DELETE /api/orders/{id}  → CALL sp_delete_order (solo Admin; 403 si no, 404 si no existe, 204 si va bien) */
+  deleteOrder(id: number): Observable<void> {
+    return this.http.delete<void>(`${API_BASE}/orders/${id}`);
+  }
+
+  /** GET /api/orders/customer/{customerId}  → get_customer_order_history() (lista vacía si no tiene pedidos) */
+  customerHistory(customerId: number): Observable<CustomerOrderHistoryLine[]> {
+    return this.http.get<CustomerOrderHistoryLine[]>(`${API_BASE}/orders/customer/${customerId}`);
+  }
+
+  /** GET /api/customers */
+  customers(): Observable<Customer[]> {
+    return this.http.get<Customer[]>(`${API_BASE}/customers`);
+  }
+
+  /** GET /api/customers/{id} */
+  customer(id: number): Observable<Customer> {
+    return this.http.get<Customer>(`${API_BASE}/customers/${id}`);
+  }
+
+  /**
+   * PUT /api/customers/{id}  (solo dirección, ciudad, código postal y país)
+   * Solo se envían los campos con valor: el backend actualiza únicamente los que recibe.
+   */
+  updateCustomer(id: number, body: UpdateCustomerContact): Observable<Customer> {
+    const payload: UpdateCustomerContact = {};
+    if (body.address != null) payload.address = body.address;
+    if (body.city != null) payload.city = body.city;
+    if (body.postalCode != null) payload.postalCode = body.postalCode;
+    if (body.country != null) payload.country = body.country;
+    return this.http.put<Customer>(`${API_BASE}/customers/${id}`, payload);
+  }
+}
