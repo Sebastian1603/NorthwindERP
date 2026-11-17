@@ -1,0 +1,78 @@
+import { HttpClient, HttpParams } from '@angular/common/http';
+import { Injectable, inject } from '@angular/core';
+import { Observable } from 'rxjs';
+import { Category, KardexEntry, KardexType, Product, StockItem, Warehouse } from '../models/api.models';
+
+/**
+ * Módulo Inventario: ProductsController + InventoryController.
+ * Consume el backend real con HttpClient. Las firmas públicas se mantienen igual que en la
+ * versión mock (devuelven Observable<T>), por lo que los componentes de `features` no cambian.
+ * Rutas y filtros confirmados por API.md (módulo Inventario, solo lectura):
+ *   - GET /api/products            ?search &categoryId
+ *   - GET /api/categories
+ *   - GET /api/inventory/stock     ?warehouseId &productId &lowStockOnly   (vw_stock_status)
+ *   - GET /api/inventory/kardex    ?productId &warehouseId &type (INBOUND|OUTBOUND) &take (1-1000)
+ *   - GET /api/inventory/warehouses
+ *
+ *  Tengo pendiente verificar los campos del JSON (StockDto, KardexEntryDto, producto,
+ *   almacén) coincidan con los modelos de `api.models.ts`. El API.md junto con los endpoints solo menciona algunos
+ *   (NeedsRestock, KardexOk, OrderId?, Notes), no la lista completa. Bueno todo segun la ia
+ *
+ * La URL base y el token JWT los resuelven `provideHttpClient` y el interceptor de auth.
+ * Si el backend está en otro origen, cambie API_BASE (o use un proxy en desarrollo).
+ */
+const API_BASE = '/api';
+
+/** Arma HttpParams omitiendo valores null, undefined o vacíos. */
+function toParams(values: Record<string, string | number | boolean | null | undefined>): HttpParams {
+  let params = new HttpParams();
+  for (const [key, value] of Object.entries(values)) {
+    if (value === null || value === undefined || value === '') continue;
+    params = params.set(key, String(value));
+  }
+  return params;
+}
+
+@Injectable({ providedIn: 'root' })
+export class InventoryApi {
+  private http = inject(HttpClient);
+
+  /** GET /api/products?search=&categoryId= */
+  products(search?: string, categoryId?: number | null): Observable<Product[]> {
+    const params = toParams({ search: search?.trim(), categoryId });
+    return this.http.get<Product[]>(`${API_BASE}/products`, { params });
+  }
+
+  /** GET /api/categories */
+  categories(): Observable<Category[]> {
+    return this.http.get<Category[]>(`${API_BASE}/categories`);
+  }
+
+  /** GET /api/inventory/stock  (vw_stock_status) */
+  stock(f: { warehouseId?: number | null; productId?: number | null; lowStockOnly?: boolean } = {}): Observable<StockItem[]> {
+    const params = toParams({
+      warehouseId: f.warehouseId,
+      productId: f.productId,
+      // Solo se envía cuando es true; false equivale a "sin filtro".
+      lowStockOnly: f.lowStockOnly ? true : null,
+    });
+    return this.http.get<StockItem[]>(`${API_BASE}/inventory/stock`, { params });
+  }
+
+  /** GET /api/inventory/kardex  (InventoryTransactions) */
+  kardex(f: { productId?: number | null; warehouseId?: number | null; type?: KardexType | null; take?: number } = {}): Observable<KardexEntry[]> {
+    const params = toParams({
+      productId: f.productId,
+      warehouseId: f.warehouseId,
+      type: f.type,
+      // El backend acepta de 1 a 1000; fuera de ese rango respondería 400.
+      take: Math.min(Math.max(f.take ?? 1000, 1), 1000),
+    });
+    return this.http.get<KardexEntry[]>(`${API_BASE}/inventory/kardex`, { params });
+  }
+
+  /** GET /api/inventory/warehouses */
+  warehouses(): Observable<Warehouse[]> {
+    return this.http.get<Warehouse[]>(`${API_BASE}/inventory/warehouses`);
+  }
+}
